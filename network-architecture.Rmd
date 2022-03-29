@@ -1,0 +1,93 @@
+---
+title: "Analysis - Network Architecture"
+author: "Rebekka Wohlrab"
+date: ""
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r Init, include=FALSE}
+library(ggfortify)
+library(dplyr)
+library(ggforce)
+library(ggrepel)
+library(dplyr)
+library(janitor)
+library(tidyr)
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(factoextra)
+data.frames <- list()
+```
+
+```{r ReadFromFiles, include=FALSE}
+list_raw <- list.files("/network", pattern = "^network.*.\\.csv$", full.names = TRUE)
+data.raw <- lapply(list_raw, read.csv, sep = "\t", header = TRUE, stringsAsFactors = TRUE, row.names = NULL, check.names = FALSE)
+frame <- NULL
+```
+
+```{r normalization, include=FALSE}
+index <-0
+
+for (i in data.raw) {
+  index <- index + 1
+  frame <- data.raw[[index]]
+  names(frame)[names(frame) == ""] <- "sample"
+  betweenness <- grep("^\\[B\\]",colnames(frame))
+  frame <- frame[,-betweenness]
+  frame[,-1] <- mutate_all(frame[,-1], function(x) as.numeric(as.character(x)))
+  frame_normalized <- frame[,-1]
+  frame_sums <- (rowSums(frame_normalized))
+  frame_min <- apply(frame_normalized,2, min)
+  frame_area_norm <- sweep(frame_normalized, 1, frame_sums, "/")
+  frame_min <- (apply(frame_area_norm,1, min))
+  frame_normalized <- sweep(frame_area_norm, 1, frame_min, "-")
+  data.frames[[index]] <- frame[,-1] # for normalization: frame_normalized
+}
+```
+
+PCA
+```{r PCAall, echo = FALSE, fig.dim = c(10,8)}
+index <-0
+
+for (i in data.raw) {
+  index <- index + 1
+  dat <- data.frames[[index]]
+  dat <- mutate_all(dat, function(x) as.numeric(as.character(x)))
+  dat <- dat[vapply(dat, function(x) length(unique(x)) > 1, logical(1L))]
+  dat <- remove_constant(dat, na.rm = TRUE, quiet = TRUE)
+  pca <- prcomp(dat, center = TRUE, scale = FALSE)
+  all_cor <- cor(dat, pca$x)
+  cor <- all_cor[abs(all_cor[,1])>0.4 | abs(all_cor[,2]) > 0.4,]
+  options(ggrepel.max.overlaps = Inf)
+  p1<-ggplot(cor,aes(x=PC1,y=PC2, label=row.names(cor) )) +
+    geom_ellipse(aes(x0 = 0, y0 = 0, a = 1, b = 1, angle = 0)) +
+    geom_ellipse(aes(x0 = 0, y0 = 0, a = 0.70710678118655, b = 0.70710678118655, angle = 0)) +
+    labs(x = paste("PC1 ",round(get_eigenvalue(pca)$variance.percent[1],digits = 2), "%"), y = paste("PC2 ",round(get_eigenvalue(pca)$variance.percent[2], digits=2), "%"))
+  p1<-p1+geom_point()+
+    geom_text_repel(aes(x = PC1, 
+                        y = PC2, 
+                        label = row.names(cor) ))
+  ggsave(p1,filename=paste("network/network_PCA_V",index,".pdf",sep=""), width=13, height=7)
+}
+```
+
+```{r decision tree, fig.width=16, echo = FALSE}
+index <-0
+for (i in data.raw) {
+  index <- index + 1
+  df <- data.raw[[index]][,-1]
+  model3 <- rpart(
+    `maxR{attacks} [F highInfected]` ~ .,
+    data = df[,-c(1:2,4:5)])
+  pdf(file=paste("network/network_decision_maxR_V",index,".pdf",sep=""), width = 9, height = 4)
+  rpart.plot(model3, type = 2, fallen.leaves= TRUE, tweak = 1.2, digits = 2)
+  dev.off()
+}
+```
+
